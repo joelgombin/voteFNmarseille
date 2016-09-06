@@ -1,0 +1,1077 @@
+---
+title: "Vote FN dans les 13-14"
+author: "Joël Gombin"
+date: "31 mai 2016"
+output: 
+  html_document:
+    self_contained: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache = TRUE, autodep = TRUE)
+```
+
+```{r loadBV, include=FALSE}
+library(dplyr)
+
+library(rgdal)
+library(rgeos)
+BVCartelec <- readOGR("./data/BV_grandes_villes_2015/", "BV_grandes_villes_2015", stringsAsFactors = FALSE)
+BVCartelec@proj4string <- CRS("+init=epsg:2154")
+BVCartelec <- spTransform(BVCartelec, CRS("+init=epsg:4326"))
+BVMrs <- BVCartelec[BVCartelec@data$CODE %in% 13201:13216,]
+
+communes <- readOGR("./data/", "communes-20150101-5m-metropole", stringsAsFactors = FALSE)
+marseille <- communes[communes@data$insee %in% as.character(13201:13216),]
+```
+
+
+```{r resultats_regionales, include=FALSE}
+
+library(tidyr)
+
+reg15BV <- readr::read_csv2("./data/RG15_Bvot_T1.txt", locale = readr::locale(encoding = "ISO-8859-1"))
+
+reg15BV <- reg15BV %>% 
+  filter(CODDPT %in% "13" & CODSUBCOM %in% "055") %>% 
+  select(-NOMPSN, -PREPSN, -NUMDEPCAND) %>% 
+  group_by(CODDPT, CODSUBCOM, CODBURVOT, CODNUA) %>% 
+  summarise(inscrits = NBRINS[1], votants = `SUM(M.NBRVOT)`[1], exprimes = `SUM(M.NBREXP)`[1], voix = sum(`SUM(V.NBRVOIX)`)) %>% 
+  ungroup %>% 
+  spread(CODNUA, voix) %>% 
+  mutate(BUREAU = paste0("132", substr(CODBURVOT, 1, 2), "_", CODBURVOT)) %>% 
+  mutate(FN = LFN / inscrits * 100,
+         FN_exp = LFN / exprimes * 100)
+
+reg15BV %>% 
+  filter(startsWith(CODBURVOT, "13")) %>% 
+  arrange(-FN)
+```
+
+```{r electeurs, include = FALSE}
+raw <- readr::read_csv2("./data/adressesetbv.csv")
+
+library(banR) # devtools::install_github("joelgombin/banR")
+library(stringr)
+
+electeurs <- raw %>%
+    filter(Adresse != "") %>%
+    mutate(Bureau = stringr::str_pad(Bureau, 4, "left", "0")) %>%
+    mutate(Arrondissement = stringr::str_sub(Bureau, 1, 2)) %>%
+    mutate(insee = paste0("132", Arrondissement)) %>%
+    mutate(AdresseOK = Adresse  %>% 
+                        str_replace("[ ]*AV[E]* DE FRAIS$", " AVENUE DE FRAIS VALLON") %>% 
+                        str_replace("[ ]*AV[E]* DE FRAIS V$", " AVENUE DE FRAIS VALLON") %>% 
+                        str_replace("[ ]*AV[E]* DE FRAIS VA$", " AVENUE DE FRAIS VALLON") %>% 
+                        str_replace("[ ]*AV[E]* DE FRAIS VAL$", " AVENUE DE FRAIS VALLON") %>% 
+                        str_replace("[ ]*AV[E]* DE FRAIS VALL$", " AVENUE DE FRAIS VALLON") %>% 
+                        str_replace("[ ]*AV[E]* DE FRAIS VALLO$", " AVENUE DE FRAIS VALLON") %>%
+                        str_replace("[ ]*AV[E]* ", " AVENUE ") %>% 
+                        str_replace("[ ]*CRS ", " COURS ") %>% 
+                        str_replace("[ ]*BD ", " BOULEVARD ") %>% 
+                        str_replace("[ ]*IMP ", " IMPASSE ") %>% 
+                        str_replace("[ ]*TRA ", " TRAVERSE ") %>% 
+                        str_replace("[ ]*MTE ", " MONTEE ") %>% 
+                        str_replace("[ ]*CHE ", " CHEMIN ") %>% 
+                        str_replace("[ ]*ALL ", " ALLEE ") %>% 
+                        str_replace("[ ]*PAT ", " PLATEAU ")) %>%
+    filter(insee %in% c("13213", "13214")) %>% 
+    count(AdresseOK, insee) %>% 
+    ban_geocode(AdresseOK, code_insee = "insee")
+
+electeurs <- electeurs %>% 
+  # LES VIEUX CYPRES
+  mutate(latitude = ifelse(AdresseOK == " ALLEE FLOREAL", 43.336585, latitude),
+         longitude = ifelse(AdresseOK == " ALLEE FLOREAL", 5.437076, longitude),
+         result_score = ifelse(AdresseOK == " ALLEE FLOREAL", 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "[0-9]+ ALLEE VAL BRISE"), 43.328716, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "[0-9]+ ALLEE VAL BRISE"), 5.421931, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "[0-9]+ ALLEE VAL BRISE"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "[0-9]+ RUE CHNORK KALOUSTIAN"), 43.328707, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "[0-9]+ RUE CHNORK KALOUSTIAN"), 5.439940, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "[0-9]+ RUE CHNORK KALOUSTIAN"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "[0-9]+ AVENUE CHARLES CAMOINS"), 43.332796, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "[0-9]+ AVENUE CHARLES CAMOINS"), 5.410780, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "[0-9]+ AVENUE CHARLES CAMOINS"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "109 CHEMIN DE S[AIN]*TE MARTHE"), 43.324405, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "109 CHEMIN DE S[AIN]*TE MARTHE"), 5.388036, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "109 CHEMIN DE S[AIN]*TE MARTHE"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "119 CHEMIN DE S[AIN]*TE MARTHE"), 43.324917, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "119 CHEMIN DE S[AIN]*TE MARTHE"), 5.387715, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "119 CHEMIN DE S[AIN]*TE MARTHE"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "121 CHEMIN DE S[AIN]*TE MARTHE"), 43.325268, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "121 CHEMIN DE S[AIN]*TE MARTHE"), 5.386175, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "121 CHEMIN DE S[AIN]*TE MARTHE"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "39 BOULEVARD CHARLES MORETTI"), 43.324936, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "39 BOULEVARD CHARLES MORETTI"), 5.383616, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "39 BOULEVARD CHARLES MORETTI"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "41 BOULEVARD CHARLES MORETTI"), 43.324522, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "41 BOULEVARD CHARLES MORETTI"), 5.385125, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "41 BOULEVARD CHARLES MORETTI"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "1 AVENUE GEORGES BRAQUE"), 43.334354, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "1 AVENUE GEORGES BRAQUE"), 5.399891, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "1 AVENUE GEORGES BRAQUE"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "15 AVENUE GEORGES BRAQUE"), 43.333176, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "15 AVENUE GEORGES BRAQUE"), 5.401811, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "15 AVENUE GEORGES BRAQUE"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "27 AVENUE GEORGES BRAQUE"), 43.332788, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "27 AVENUE GEORGES BRAQUE"), 5.402697, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "27 AVENUE GEORGES BRAQUE"), 1, result_score)) %>%
+  # FONT VERT
+  mutate(latitude = ifelse(str_detect(AdresseOK, "206 CHEMIN DE SAINTE MARTHE"), 43.331037, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "206 CHEMIN DE SAINTE MARTHE"), 5.389990, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "206 CHEMIN DE SAINTE MARTHE"), 1, result_score)) %>%
+  # LES JONQUILLES
+  mutate(latitude = ifelse(str_detect(AdresseOK, "2 IMPASSE RAVEL"), 43.324459, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "2 IMPASSE RAVEL"), 5.429446, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "2 IMPASSE RAVEL"), 1, result_score)) %>%
+  # FRAIS VALLON
+  mutate(latitude = ifelse(str_detect(AdresseOK, "5 IMPASSE RAVEL"), 43.326335, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "5 IMPASSE RAVEL"), 5.430527, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "5 IMPASSE RAVEL"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "9 IMPASSE RAVEL"), 43.326322, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "9 IMPASSE RAVEL"), 5.429755, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "9 IMPASSE RAVEL"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "24 AVENUE DE FRAIS VALLON"), 43.324483, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "24 AVENUE DE FRAIS VALLON"), 5.423767, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "24 AVENUE DE FRAIS VALLON"), 1, result_score)) %>% 
+  mutate(latitude = ifelse(str_detect(AdresseOK, "37 AVENUE DE FRAIS VALLON"), 43.325110, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "37 AVENUE DE FRAIS VALLON"), 5.425093, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "37 AVENUE DE FRAIS VALLON"), 1, result_score)) %>% 
+  mutate(latitude = ifelse(str_detect(AdresseOK, "38 AVENUE DE FRAIS VALLON"), 43.324035, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "38 AVENUE DE FRAIS VALLON"), 5.426018, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "38 AVENUE DE FRAIS VALLON"), 1, result_score)) %>% 
+  mutate(latitude = ifelse(str_detect(AdresseOK, "48 AVENUE DE FRAIS VALLON"), 43.324397, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "48 AVENUE DE FRAIS VALLON"), 5.427578, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "48 AVENUE DE FRAIS VALLON"), 1, result_score)) %>% 
+  mutate(latitude = ifelse(str_detect(AdresseOK, "51 AVENUE DE FRAIS VALLON"), 43.326458, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "51 AVENUE DE FRAIS VALLON"), 5.428182, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "51 AVENUE DE FRAIS VALLON"), 1, result_score)) %>% 
+  mutate(latitude = ifelse(str_detect(AdresseOK, "52 AVENUE DE FRAIS VALLON"), 43.324878, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "52 AVENUE DE FRAIS VALLON"), 5.428788, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "52 AVENUE DE FRAIS VALLON"), 1, result_score)) %>% 
+  mutate(latitude = ifelse(str_detect(AdresseOK, "53 AVENUE DE FRAIS VALLON"), 43.325863, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "53 AVENUE DE FRAIS VALLON"), 5.428971, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "53 AVENUE DE FRAIS VALLON"), 1, result_score)) %>% 
+  mutate(latitude = ifelse(str_detect(AdresseOK, "71 AVENUE DE FRAIS VALLON"), 43.325797, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "71 AVENUE DE FRAIS VALLON"), 5.430135, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "71 AVENUE DE FRAIS VALLON"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "84 AVENUE DE FRAIS VALLON"), 43.324959, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "84 AVENUE DE FRAIS VALLON"), 5.432617, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "84 AVENUE DE FRAIS VALLON"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "152 AVENUE DE FRAIS VALLON"), 43.325179, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "152 AVENUE DE FRAIS VALLON"), 5.432721, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "152 AVENUE DE FRAIS VALLON"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "156 AVENUE DE FRAIS VALLON"), 43.324280, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "156 AVENUE DE FRAIS VALLON"), 5.434116, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "156 AVENUE DE FRAIS VALLON"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "75 CHEMIN DES JONQUILLES"), 43.327818, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "75 CHEMIN DES JONQUILLES"), 5.431006, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "75 CHEMIN DES JONQUILLES"), 1, result_score)) %>%
+  # LE CLOS LA ROSE
+  mutate(latitude = ifelse(str_detect(AdresseOK, "35 AVENUE DE LA CROIX ROUGE"), 43.332364, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "35 AVENUE DE LA CROIX ROUGE"), 5.429993, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "35 AVENUE DE LA CROIX ROUGE"), 1, result_score)) %>%
+  # LA BEGUDE
+  mutate(latitude = ifelse(str_detect(AdresseOK, "98 AVENUE DE LA CROIX ROUGE"), 43.332992, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "98 AVENUE DE LA CROIX ROUGE"), 5.442203, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "98 AVENUE DE LA CROIX ROUGE"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "2 RUE MARIUS DIOULOUFET"), 43.333726, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "2 RUE MARIUS DIOULOUFET"), 5.439092, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "2 RUE MARIUS DIOULOUFET"), 1, result_score)) %>%
+  # PARC DE LA ROSE 
+  mutate(latitude = ifelse(str_detect(AdresseOK, "120 AVENUE JEAN PAUL SARTRE"), 43.326782, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "120 AVENUE JEAN PAUL SARTRE"), 5.426009, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "120 AVENUE JEAN PAUL SARTRE"), 1, result_score)) %>%
+  mutate(latitude = ifelse(str_detect(AdresseOK, "11 IMPASSE DE LA FARANDOLE"), 43.327192, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "11 IMPASSE DE LA FARANDOLE"), 5.425219, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "11 IMPASSE DE LA FARANDOLE"), 1, result_score)) %>%  
+  # CHATEAU BELMONT
+  mutate(latitude = ifelse(str_detect(AdresseOK, "49 TRAVERSE DES BONNETS"), 43.331645, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "49 TRAVERSE DES BONNETS"), 5.423349, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "49 TRAVERSE DES BONNETS"), 1, result_score)) %>%  
+  # GROUPE LA GARDE
+  mutate(latitude = ifelse(str_detect(AdresseOK, "11 BOULEVARD DU METRO"), 43.332089, latitude),
+         longitude = ifelse(str_detect(AdresseOK, "11 BOULEVARD DU METRO"), 5.428202, longitude),
+         result_score = ifelse(str_detect(AdresseOK, "11 BOULEVARD DU METRO"), 1, result_score)) %>%  
+  # # HAMEAU VAL DE GRAY
+  # mutate(latitude = ifelse(str_detect(AdresseOK, "77 BOULEVARD BARA"), 43.332089, latitude),
+  #        longitude = ifelse(str_detect(AdresseOK, "11 BOULEVARD DU METRO"), 5.428202, longitude),
+  #        result_score = ifelse(str_detect(AdresseOK, "11 BOULEVARD DU METRO"), 1, result_score)) %>%  
+  
+  filter(result_score > 0.45) %>% 
+  group_by(result_label) %>% 
+  mutate(n = sum(n)) %>% 
+  distinct(result_label)
+
+electeurs <- SpatialPointsDataFrame(as.data.frame(electeurs[, c("longitude", "latitude")]), as.data.frame(electeurs), proj4string = CRS("+init=epsg:4326"))
+
+
+```
+
+Voici une première carte de cadrage du vote FN dans le 7e secteur (ici comme par la suite, au premier tour des régionales de 2015, en % des inscrits). On peut tester (avec le petit contrôle en haut à droite de la carte) divers arrières-plans. J'ai mis par défaut un fond léger, en noir et blanc. Comme la largeur de la carte est assez faible, j'ai mis une possibilité de passer en plein écran (voir en haut à gauche de la carte).
+
+```{r cadrage, message=FALSE, warning=FALSE}
+
+library(leaflet)
+library(tmap)
+
+BVMrs <- append_data(BVMrs, reg15BV, key.shp = "BUREAU", key.data = "BUREAU")
+
+BV1314 <- BVMrs[BVMrs@data$CODE %in% c("13213", "13214"),]
+
+binpal <- colorBin("Blues", BV1314$FN, c(2.8, 12, 18, 22, 30.7))
+
+bb1314 <- bb(BV1314, ext = 1)
+
+leaflet(BV1314, width = 534) %>%
+  fitBounds(bb1314[1,1], bb1314[2,1], bb1314[1,2], bb1314[2,2]) %>% 
+  addProviderTiles("CartoDB.Positron",
+                   group = "Positron (par défaut)") %>% 
+  addProviderTiles("OpenStreetMap.BlackAndWhite",
+                   group = "OSM (noir et blanc)") %>% 
+  addProviderTiles("OpenTopoMap",
+                   group = "OpenTopoMap") %>% 
+  addTiles(group = "OSM") %>% 
+  addProviderTiles("Esri.WorldImagery",
+                   group = "Satellite") %>% 
+  addPolygons(stroke = TRUE,
+              opacity = 0.6,
+              fillOpacity = 0,
+              smoothFactor = 0.8,
+              weight = 1,
+              group = "Bureaux de vote") %>% 
+  addPolygons(data = marseille, 
+              stroke = TRUE, 
+              opacity = 0.8, 
+              fillOpacity = 0,
+              smoothFactor = 0.8,
+              fillColor = NULL,
+              color = "black",
+              weight = 2,
+              group = "Arrondissements") %>% 
+  addPolygons(stroke = FALSE, 
+              fillOpacity = 0.5, 
+              smoothFactor = 0.8, 
+              color = ~binpal(FN),
+              popup = ~paste0("<b>", substr(BUREAU, 4, 5), "e arrondissement, bureau n° ", substr(BUREAU, 9,10), "</b><BR><BR>Vote FN : ", round(FN, 1), " % des inscrits<BR>(", round(FN_exp, 1), " % des exprimés)"),
+              group = "Vote FN"
+              ) %>% 
+  addMagnifyingGlass(radius = 50,
+                     fixedZoom = 13,
+                     fixedPosition = TRUE, 
+                     latLng = c(43.325101, 5.427882),
+                     group = "Loupes") %>% 
+  addMagnifyingGlass(radius = 50,
+                     fixedZoom = 13,
+                     fixedPosition = TRUE, 
+                     latLng = c(43.352412, 5.440392),
+                     group = "Loupes") %>% 
+  addMagnifyingGlass(radius = 50,
+                     fixedZoom = 15,
+                     fixedPosition = TRUE, 
+                     latLng = c(43.329832, 5.419034),
+                     group = "Loupes") %>% 
+  addLegend("bottomleft", 
+            pal = binpal, 
+            values = ~FN, 
+            title = "Vote FN en % des inscrits, régionales 2015",
+            labFormat = labelFormat(suffix = " %")) %>% 
+  addLayersControl(baseGroups = c("Positron (par défaut)", "OSM (noir et blanc)", "OpenTopoMap", "OSM", "Satellite"),
+                   overlayGroups = c("Vote FN", "Bureaux de vote", "Arrondissements", "Loupes"),
+                   options = layersControlOptions(collapsed = TRUE)) %>% 
+  leafletplugins::addControlFullScreen()
+
+
+```
+
+<!-- Une autre possibilité est de représenter la même chose mais sur la base des IRIS plutôt que des bureaux de vote. L'avantage est que le découpage des IRIS correspond vraiment à des quartiers assez homogènes : -->
+
+```{r cadrage2, message=FALSE, warning=FALSE, include = FALSE}
+
+IRIS13 <- readOGR("./data/iris/", "CONTOURS-IRIS_D013", stringsAsFactors = FALSE, verbose = FALSE)
+IRIS13 <- spTransform(IRIS13, CRS("+init=epsg:4326"))
+
+
+library(spReapportion) # devtools::install_github("joelgombin/spReapportion")
+
+IRIS1314 <- IRIS13[substr(IRIS13@data$DCOMIRIS, 1, 5) %in% c("13213", "13214"),]
+votes_IRIS <- spReapportion(old_geom = BV1314, 
+                            new_geom = IRIS1314, 
+                            data = BV1314@data, 
+                            old_ID = "BUREAU", 
+                            new_ID = "DCOMIRIS", 
+                            data_ID = "BUREAU", 
+                            variables = c("inscrits", "votants", "exprimes", "LDIV", "LDLF", "LDVG", "LECO", "LEXD", "LEXG", "LFN", "LUD", "LUG", "LVEG"), 
+                            mode = "count", 
+                            weight_matrix = electeurs,
+                            weight_matrix_var = "n")
+
+IRIS1314 <- append_data(IRIS1314, votes_IRIS, "DCOMIRIS", "DCOMIRIS")
+IRIS1314@data$FN_ins <- IRIS1314@data$LFN / IRIS1314@data$inscrits * 100
+IRIS1314@data$FN_exp <- IRIS1314@data$LFN / IRIS1314@data$exprimes * 100
+
+binpal <- colorBin("Blues", IRIS1314@data$FN_ins, c(3, 12, 18, 22, 28))
+
+leaflet(IRIS1314, width = 534) %>%
+  fitBounds(bb1314[1,1], bb1314[2,1], bb1314[1,2], bb1314[2,2]) %>% 
+  addProviderTiles("CartoDB.Positron",
+                   group = "Positron (par défaut)") %>% 
+  addProviderTiles("OpenTopoMap",
+                   group = "OpenTopoMap") %>% 
+  addTiles(group = "OSM") %>% 
+  addProviderTiles("OpenStreetMap.BlackAndWhite",
+                   group = "OSM (noir et blanc)") %>% 
+  addProviderTiles("Esri.WorldImagery",
+                   group = "Satellite") %>% 
+  addPolygons(stroke = TRUE,
+              opacity = 0.6,
+              fillOpacity = 0,
+              smoothFactor = 0.8,
+              weight = 1,
+              group = "IRIS") %>% 
+  addPolygons(data = marseille, 
+              stroke = TRUE, 
+              opacity = 0.8, 
+              fillOpacity = 0,
+              smoothFactor = 0.8,
+              fillColor = NULL,
+              color = "black",
+              weight = 2,
+              group = "Arrondissements") %>% 
+  addPolygons(stroke = FALSE, 
+              fillOpacity = 0.5, 
+              smoothFactor = 0.8, 
+              color = ~binpal(FN_ins),
+              popup = ~paste0("<b>", substr(DEPCOM, 4, 5), "e arrondissement, IRIS ", NOM_IRIS, "</b><BR><BR>Vote FN : ", round(FN_ins, 1), " % des inscrits<BR>(", round(FN_exp, 1), " % des exprimés)"),
+              group = "Vote FN"
+              ) %>% 
+  addMagnifyingGlass(radius = 50,
+                     fixedZoom = 13,
+                     fixedPosition = TRUE, 
+                     latLng = c(43.325101, 5.427882),
+                     group = "Loupes") %>% 
+  addMagnifyingGlass(radius = 50,
+                     fixedZoom = 13,
+                     fixedPosition = TRUE, 
+                     latLng = c(43.352412, 5.440392),
+                     group = "Loupes") %>% 
+  addMagnifyingGlass(radius = 50,
+                     fixedZoom = 15,
+                     fixedPosition = TRUE, 
+                     latLng = c(43.329832, 5.419034),
+                     group = "Loupes") %>% 
+  addLegend("bottomleft", 
+            pal = binpal, 
+            values = ~FN_ins, 
+            title = "Vote FN en % des inscrits, régionales 2015",
+            labFormat = labelFormat(suffix = " %")) %>% 
+  addLayersControl(baseGroups = c("Positron (par défaut)", "OSM (noir et blanc)", "OpenTopoMap", "OSM", "Satellite"),
+                   overlayGroups = c("Vote FN", "IRIS", "Arrondissements", "Loupes"),
+                   options = layersControlOptions(collapsed = TRUE)) %>% 
+  leafletplugins::addControlFullScreen()
+
+
+```
+
+```{r creation_base, eval = FALSE}
+# création de la base de données du fichier détail du recensement, si n'existe pas
+library(DBI)
+library(Insee2MonetDB) # devtools::install_github("joelgombin/Insee2MonetDB")
+
+if (!dir.exists("~/monetdb")) {
+  dir.create("~/monetdb")
+}
+mdb <- dbConnect(MonetDB.R(), embedded = "~/monetdb")
+
+path <- normalizePath("./data/bdd.zip")
+downloader::download("http://telechargement.insee.fr/fichiersdetail/RP2012/txt/RP2012_INDCVIze_txt.zip", destfile = path)
+unzip(path, unzip = "unzip", exdir = tmp, junkpaths = TRUE)
+
+# la version diffusée par l'INSEE utilise ',' comme séparateur décimal, on a besoin de "." :
+system2("tr ',' '.' <./data/FD_INDCVIZE.txt >./data/FD_INDCVIZE.txt2")
+try(invisible(dbSendQuery(mdb, "DROP TABLE rp_indcvi_2012")), silent=TRUE)
+guess <- read.csv(normalizePath("./data/FD_INDCVIZE.txt2"), sep = ";", stringsAsFactors=FALSE, nrows=10000)
+
+create <- sprintf("CREATE TABLE rp_indcvi_2012 ( %s )", 
+                  paste0(sprintf('"%s" %s', tolower(colnames(guess)), 
+                                 sapply(guess, dbDataType, dbObj=mdb)), collapse=","))
+
+create <- gsub('INTEGER', 'STRING', create, fixed = TRUE)
+
+invisible(dbSendQuery(mdb, create))
+
+invisible(dbSendQuery(mdb, paste0("COPY OFFSET 2 
+                                 INTO rp_indcvi_2012
+                                 FROM '", path, "' USING  DELIMITERS ';'")))
+
+
+```
+
+
+
+```{r collectif_et_individuel, include=FALSE}
+
+
+
+library(MonetDB.R)
+library(MonetDBLite)
+
+conn <- src_monetdb(embedded = "~/monetdb")
+
+rp2012cvi <- tbl(conn, from = "rp_indcvi_2012")
+
+modalites <- read.table("./data/MOD_INDCVI_2012ok.txt", header = TRUE, sep = ";", stringsAsFactors = FALSE)
+
+relabel <- function(df, modalites, variable, VAR_CODE = "VAR_CODE", VAR_LIB = "VAR_LIB", MOD_LIB = "MOD_LIB", MOD_CODE = "MOD_CODE") {
+  df[, unique(modalites[tolower(modalites[[VAR_CODE]]) %in% tolower(variable), VAR_LIB])] <-  modalites[tolower(modalites[[VAR_CODE]]) %in% tolower(variable), MOD_LIB][match(df[[variable]], modalites[tolower(modalites[[VAR_CODE]]) %in% tolower(variable), MOD_CODE])]
+  return(df)
+}
+
+
+logements1314 <- rp2011cvi %>%
+  filter(inatc == "1") %>% 
+  filter(as.integer(agerev) > 17) %>% 
+  filter(dept == "13") %>% 
+  select(iris, cantville, nummi, catl, hlml, typl) %>% 
+  collect() %>% 
+  filter(grepl("1321[34][0-9]{4}", iris)) %>%
+  relabel(modalites, "typl") %>% 
+  group_by(iris, `Type de logement`) %>% 
+  summarise(n = n()) %>% 
+  spread(`Type de logement`, n, fill = 0) %>% 
+  mutate(Logements = Appartement + Maison) %>% 
+  mutate_each(funs(. / Logements * 100), Appartement, Maison) %>% 
+  ungroup
+
+
+
+df <- votes_IRIS %>% 
+  left_join(logements1314, by = c("DCOMIRIS" = "iris")) %>% 
+  mutate(FN = LFN / inscrits * 100)
+mod1 <- votes_IRIS %>% 
+  left_join(logements1314, by = c("DCOMIRIS" = "iris")) %>% 
+  mutate(FN = LFN / inscrits * 100) %>% 
+  lm(FN ~ 0 + Appartement + Maison, data = .)
+
+# Appartement = 0.13
+# Maison = 0.31
+
+# Mais : regarder aussi les résidus. + 10 dans l'iris 13210102 à Château-Gombert, -9.5 à la Busserine (132140504)
+# Donc la relation est plutôt quadratique que linéaire
+library(ggplot2)
+
+mod1 %>% 
+  broom::augment() %>% 
+  left_join(df %>% add_rownames(), by = c(".rownames" = "rowname")) %>% 
+  ggplot(aes(`.fitted`, `.resid`)) +
+  geom_point()
+
+aug_df <- mod1 %>% 
+  broom::augment() %>% 
+  left_join(df %>% add_rownames(), by = c(".rownames" = "rowname"))
+
+
+votes_IRIS %>% 
+  left_join(logements1314, by = c("DCOMIRIS" = "iris")) %>% 
+  mutate(PS = LUG / inscrits * 100) %>% 
+  lm(PS ~ 0 + Appartement + Maison, data = .) %>% 
+  summary
+
+# Appartement = 0.07
+# Maison = 0.1
+
+votes_IRIS %>% 
+  left_join(logements1314, by = c("DCOMIRIS" = "iris")) %>% 
+  mutate(abstention = (inscrits - votants) / inscrits * 100) %>% 
+  lm(abstention ~ 0 + Appartement + Maison, data = .) %>% 
+  summary
+
+# Appartement = 0.66
+# Maison = 0.38
+
+votes_IRIS %>% 
+  left_join(logements1314, by = c("DCOMIRIS" = "iris")) %>% 
+  mutate(droite = LUD / inscrits * 100) %>% 
+  lm(droite ~ 0 + Appartement + Maison, data = .) %>% 
+  summary
+
+# Appartement = 0.06
+# Maison = 0.12
+
+
+```
+
+
+
+```{r loadOSM, include=FALSE}
+frais_vallon_bb <- bb(IRIS1314[IRIS1314$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)), ])
+frais_vallon_raster <- read_osm(frais_vallon_bb, raster = TRUE, minNumTiles = 20, type = "osm", mergeTiles = TRUE)
+frais_vallon_sat <- read_osm(frais_vallon_bb, raster = TRUE, minNumTiles = 20, type = "bing", mergeTiles = TRUE)
+frais_vallon_thin <- read_osm(frais_vallon_bb, raster = TRUE, minNumTiles = 20, type = "maptoolkit-topo", mergeTiles = TRUE)
+frais_vallon_vector <- read_osm(frais_vallon_bb, 
+                                buildings = osm_poly("building"),
+                                zones = osm_poly("landuse=residential"),
+                                metro = osm_point("station=subway"))
+```
+
+```{r loadOSM_CG, include=FALSE}
+#CG_bb <- bb(IRIS1314[IRIS1314$DCOMIRIS %in% as.character(c(132130102, 132130103, 132130701, 132130501)), ])
+CG_bb <- bb(cbind(c(5.428877,43.34710), c(5.449862,43.366701)))
+CG_raster <- read_osm(CG_bb, raster = TRUE, minNumTiles = 20, type = "osm", mergeTiles = TRUE)
+CG_thin <- read_osm(CG_bb, raster = TRUE, minNumTiles = 20, type = "maptoolkit-topo", mergeTiles = TRUE)
+CG_vector <- read_osm(CG_bb, 
+                      buildings = osm_poly("building"),
+                      zones = osm_poly("landuse=residential"))
+
+```
+
+
+```{r prepareOSM, include=FALSE}
+library(rgeos)
+frais_vallon_vector$buildings <- spTransform(frais_vallon_vector$buildings, CRS("+init=epsg:2154"))
+frais_vallon_vector$buildings@data$area <- gArea(frais_vallon_vector$buildings, byid = TRUE)
+# il faut enlever la colone timestamp, qui pose problème avec mapview (voir https://github.com/environmentalinformatics-marburg/mapview/issues/26)
+frais_vallon_vector$buildings <- frais_vallon_vector$buildings[, setdiff(names(frais_vallon_vector$buildings), "timestamp")]
+
+frais_vallon_vector$zones <- spTransform(frais_vallon_vector$zones, CRS("+init=epsg:2154"))
+frais_vallon_vector$zones <- frais_vallon_vector$zones[, setdiff(names(frais_vallon_vector$zones), "timestamp")]
+frais_vallon_vector$zones$area <- NA
+```
+
+```{r prepareOSM_CG, include=FALSE}
+CG_vector$buildings <- spTransform(CG_vector$buildings, CRS("+init=epsg:2154"))
+CG_vector$buildings@data$area <- gArea(CG_vector$buildings, byid = TRUE)
+# il faut enlever la colone timestamp, qui pose problème avec mapview (voir https://github.com/environmentalinformatics-marburg/mapview/issues/26)
+CG_vector$buildings <- CG_vector$buildings[, setdiff(names(CG_vector$buildings), "timestamp")]
+
+CG_vector$zones <- spTransform(CG_vector$zones, CRS("+init=epsg:2154"))
+CG_vector$zones <- CG_vector$zones[, setdiff(names(CG_vector$zones), "timestamp")]
+CG_vector$zones$area <- NA
+```
+
+```{r osm_suite, include=FALSE}
+
+IRIS1314 <- spTransform(IRIS1314, CRS("+init=epsg:2154"))
+
+# vérifier dans quel iris sont les bâtiments
+frais_vallon_vector$buildings@data <- cbind(frais_vallon_vector$buildings@data, over(frais_vallon_vector$buildings, IRIS1314[IRIS1314$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)),], byid = TRUE, minDimension = 2))
+
+CG_vector$buildings@data <- cbind(CG_vector$buildings@data, over(CG_vector$buildings, IRIS1314[IRIS1314$DCOMIRIS %in% as.character(c(132130102, 132130103, 132130701, 132130501)),], byid = TRUE, minDimension = 2))
+
+# ne garder que les données du quartier considéré
+frais_vallon_vector$buildings <- frais_vallon_vector$buildings[frais_vallon_vector$buildings$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)), ]
+
+CG_vector$buildings <- CG_vector$buildings[CG_vector$buildings$DCOMIRIS %in% as.character(c(132130102, 132130103, 132130701, 132130501)), ]
+
+frais_vallon_vector$zones <- spTransform(frais_vallon_vector$zones, CRS("+init=epsg:2154"))
+frais_vallon_vector$zones@data <- cbind(frais_vallon_vector$zones@data, over(frais_vallon_vector$zones, IRIS1314[IRIS1314$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)),], byid = TRUE, minDimension = 2))
+
+frais_vallon_vector$zones <- frais_vallon_vector$zones[frais_vallon_vector$zones$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)),]
+
+CG_vector$zones <- spTransform(CG_vector$zones, CRS("+init=epsg:2154"))
+CG_vector$zones@data <- cbind(CG_vector$zones@data, over(CG_vector$zones, IRIS1314[IRIS1314$DCOMIRIS %in% as.character(c(132130102, 132130103, 132130701, 132130501)),], byid = TRUE, minDimension = 2))
+
+CG_vector$zones <- CG_vector$zones[CG_vector$zones$DCOMIRIS %in% as.character(c(132130102, 132130103, 132130701, 132130501)),]
+
+
+# il faut enlever Bois-Lemaître (qui intersecte avec un IRIS de FV)
+frais_vallon_vector$zones <- frais_vallon_vector$zones[!frais_vallon_vector$zones$id %in%  "379934299",]
+
+
+# remplacer les bâtiments individuels par des zones résidentielles
+osm_batiments <- frais_vallon_vector$buildings
+osm_batiments <- osm_batiments[which(is.na(over(osm_batiments, frais_vallon_vector$zones)[, "id"])), ]
+osm_batiments <- osm_batiments[!apply(gCoveredBy(osm_batiments, frais_vallon_vector$zones, byid = TRUE), 1, any),]
+osm_batiments$source <- "batiments"
+frais_vallon_vector$zones$source <- "zones"
+osm_batiments <- rbind(osm_batiments, frais_vallon_vector$zones)
+
+osm_batiments_CG <- CG_vector$buildings
+osm_batiments_CG <- osm_batiments_CG[which(is.na(over(osm_batiments_CG, CG_vector$zones)[, "id"])), ]
+osm_batiments_CG <- osm_batiments_CG[!apply(gCoveredBy(osm_batiments_CG, CG_vector$zones, byid = TRUE), 1, any),]
+osm_batiments_CG$source <- "batiments"
+CG_vector$zones$source <- "zones"
+osm_batiments_CG <- rbind(osm_batiments_CG, CG_vector$zones)
+
+
+# étiqueter les bâtiments
+frais_vallon_vector$buildings$type <- "maison"                                   
+frais_vallon_vector$buildings[frais_vallon_vector$buildings$area > quantile(frais_vallon_vector$buildings$area, 0.92), "type"] <- "grand ensemble"
+
+CG_vector$buildings$type <- "maison"                                   
+CG_vector$buildings[CG_vector$buildings$area > quantile(frais_vallon_vector$buildings$area, 0.92), "type"] <- "grand ensemble"
+
+
+osm_batiments@data$type <- "maison"
+osm_batiments@data[!is.na(over(osm_batiments, frais_vallon_vector$buildings[frais_vallon_vector$buildings$type %in% "grand ensemble",], minDimension = 1)[,"id"]), "type"] <- "grand ensemble"
+
+maisons <- osm_batiments[osm_batiments$type == "maison", ]
+ 
+immeubles <- osm_batiments[osm_batiments$type == "grand ensemble", ]
+
+
+osm_batiments_CG@data$type <- "maison"
+osm_batiments_CG@data[!is.na(over(osm_batiments_CG, CG_vector$buildings[CG_vector$buildings$type %in% "grand ensemble",], minDimension = 1)[,"id"]), "type"] <- "grand ensemble"
+
+## corrections manuelles
+osm_batiments_CG@data[osm_batiments_CG@data$id %in% c("339788097", "339330117", "339788098", "339788096", "339789721", "424199735", "424201094", "424201759", "424201616", "424201883", "424202912", "424203802", "424203361", "424203205", "424202454", "424362510", "424371224", "424583746", "424583225"), "type"] <- "maison"
+
+maisons_CG <- osm_batiments_CG[osm_batiments_CG$type == "maison", ]
+ 
+immeubles_CG <- osm_batiments_CG[osm_batiments_CG$type == "grand ensemble", ]
+
+# assigner des poids aux immeubles (pour éviter de mettre des électeurs dans des bâtiments non habités)
+library(purrr)
+
+
+buffered_immeubles <- gBuffer(immeubles, byid = FALSE, width = 3, capStyle = "ROUND")
+buffered_immeubles <- disaggregate(buffered_immeubles)
+buffered_immeubles <- SpatialPolygonsDataFrame(buffered_immeubles, data.frame(ID = map_chr(seq_along(buffered_immeubles), ~ buffered_immeubles@polygons[[.x]]@ID), row.names = map_chr(seq_along(buffered_immeubles), ~ buffered_immeubles@polygons[[.x]]@ID), stringsAsFactors = FALSE))
+
+buffered_immeubles_CG <- gBuffer(immeubles_CG, byid = FALSE, width = 3, capStyle = "ROUND")
+buffered_immeubles_CG <- disaggregate(buffered_immeubles_CG)
+buffered_immeubles_CG <- SpatialPolygonsDataFrame(buffered_immeubles_CG, data.frame(ID = map_chr(seq_along(buffered_immeubles_CG), ~ buffered_immeubles_CG@polygons[[.x]]@ID), row.names = map_chr(seq_along(buffered_immeubles_CG), ~ buffered_immeubles_CG@polygons[[.x]]@ID), stringsAsFactors = FALSE))
+
+
+# fusionner les "maisons" qui intersectent les immeubles 
+
+buffered_immeubles <- gUnion(maisons[which(!is.na(over(maisons, buffered_immeubles, minDimension = 2)[,"ID"])),], buffered_immeubles, byid = FALSE)
+buffered_immeubles <- disaggregate(buffered_immeubles)
+buffered_immeubles <- SpatialPolygonsDataFrame(buffered_immeubles, data.frame(ID = map_chr(seq_along(buffered_immeubles), ~ buffered_immeubles@polygons[[.x]]@ID), row.names = map_chr(seq_along(buffered_immeubles), ~ buffered_immeubles@polygons[[.x]]@ID), stringsAsFactors = FALSE))
+
+buffered_immeubles_CG <- gUnion(maisons_CG[which(!is.na(over(maisons_CG, buffered_immeubles_CG, minDimension = 2)[,"ID"])),], buffered_immeubles_CG, byid = FALSE)
+buffered_immeubles_CG <- disaggregate(buffered_immeubles_CG)
+buffered_immeubles_CG <- SpatialPolygonsDataFrame(buffered_immeubles_CG, data.frame(ID = map_chr(seq_along(buffered_immeubles_CG), ~ buffered_immeubles_CG@polygons[[.x]]@ID), row.names = map_chr(seq_along(buffered_immeubles_CG), ~ buffered_immeubles_CG@polygons[[.x]]@ID), stringsAsFactors = FALSE))
+
+
+# enlever ces maisons, du coup
+buffered_maisons <- gBuffer(maisons[which(is.na(over(maisons, buffered_immeubles, minDimension = 2)[,"ID"])),], byid = FALSE, width = 3, capStyle = "ROUND")
+buffered_maisons <- disaggregate(buffered_maisons)
+buffered_maisons <- SpatialPolygonsDataFrame(buffered_maisons, data.frame(ID = map_chr(seq_along(buffered_maisons), ~ buffered_maisons@polygons[[.x]]@ID), row.names = map_chr(seq_along(buffered_maisons), ~ buffered_maisons@polygons[[.x]]@ID), stringsAsFactors = FALSE))
+
+buffered_maisons_CG <- gBuffer(maisons_CG[which(is.na(over(maisons_CG, buffered_immeubles_CG, minDimension = 2)[,"ID"])),], byid = FALSE, width = 3, capStyle = "ROUND")
+buffered_maisons_CG <- disaggregate(buffered_maisons_CG)
+buffered_maisons_CG <- SpatialPolygonsDataFrame(buffered_maisons_CG, data.frame(ID = map_chr(seq_along(buffered_maisons_CG), ~ buffered_maisons_CG@polygons[[.x]]@ID), row.names = map_chr(seq_along(buffered_maisons_CG), ~ buffered_maisons_CG@polygons[[.x]]@ID), stringsAsFactors = FALSE))
+
+
+buffered_maisons@data$ID <-  paste0("M", buffered_maisons@data$ID)
+buffered_maisons <- spChFIDs(buffered_maisons, buffered_maisons@data$ID)
+buffered_immeubles@data$ID <-  paste0("I", buffered_immeubles@data$ID)
+buffered_immeubles <- spChFIDs(buffered_immeubles, buffered_immeubles@data$ID)
+
+buffered_maisons_CG@data$ID <-  paste0("M", buffered_maisons_CG@data$ID)
+buffered_maisons_CG <- spChFIDs(buffered_maisons_CG, buffered_maisons_CG@data$ID)
+buffered_immeubles_CG@data$ID <-  paste0("I", buffered_immeubles_CG@data$ID)
+buffered_immeubles_CG <- spChFIDs(buffered_immeubles_CG, buffered_immeubles_CG@data$ID)
+
+
+buffered_buildings <- rbind(buffered_maisons, buffered_immeubles)
+buffered_buildings@data$type = ifelse(str_sub(buffered_buildings@data$ID, 1, 1) %in% "I", "grand ensemble", "maison")
+
+buffered_buildings_CG <- rbind(buffered_maisons_CG, buffered_immeubles_CG)
+buffered_buildings_CG@data$type = ifelse(str_sub(buffered_buildings_CG@data$ID, 1, 1) %in% "I", "grand ensemble", "maison")
+
+
+# récupérer le nombre d'électeurs
+
+electeurs <- spTransform(electeurs, CRS("+init=epsg:2154"))
+
+IRIS1314 <- spTransform(IRIS1314, CRS("+init=epsg:2154"))
+
+# on ne garde que les électeurs du quartier
+electeursFV <- electeurs[!is.na(over(electeurs, IRIS1314[IRIS1314@data$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)), ])$DCOMIRIS), ]
+
+electeursCG <- electeurs[!is.na(over(electeurs, IRIS1314[IRIS1314@data$DCOMIRIS %in% as.character(c(132130102, 132130103, 132130701, 132130501)), ])$DCOMIRIS), ]
+gClip <- function(shp, bb){
+  if(class(bb) == "matrix") b_poly <- as(raster::extent(as.vector(t(bb))), "SpatialPolygons")
+  else b_poly <- as(raster::extent(bb), "SpatialPolygons")
+  b_poly@proj4string <- CRS("+init=epsg:4326")
+  b_poly <- spTransform(b_poly, shp@proj4string)
+  shp[gWithin(shp, b_poly, byid = T)[1,],]
+}
+electeursCG <- gClip(electeursCG, CG_bb)
+
+# il faut consolider les maisons
+
+maisons <- gBuffer(buffered_buildings[buffered_buildings$type %in% "maison",], width = 3)
+maisons <- disaggregate(maisons)
+maisons <- spChFIDs(maisons, paste0("M", map_chr(seq_along(maisons), ~ maisons@polygons[[.x]]@ID)))
+maisons <- SpatialPolygonsDataFrame(maisons, data.frame(ID = row.names(maisons), type = "maison", row.names = row.names(maisons), stringsAsFactors = FALSE))
+
+buffered_buildings <- rbind(buffered_buildings[buffered_buildings$type %in% "grand ensemble",], maisons)
+
+buildings_proches <- map_chr(seq_along(electeursFV), ~ buffered_buildings@data[which.min(gDistance(buffered_buildings, electeursFV[.x, ], byid = TRUE)), "ID"])
+
+maisons_CG <- gBuffer(buffered_buildings_CG[buffered_buildings_CG$type %in% "maison",], width = 3)
+maisons_CG <- disaggregate(maisons_CG)
+maisons_CG <- spChFIDs(maisons_CG, paste0("M", map_chr(seq_along(maisons_CG), ~ maisons_CG@polygons[[.x]]@ID)))
+maisons_CG <- SpatialPolygonsDataFrame(maisons_CG, data.frame(ID = row.names(maisons_CG), type = "maison", row.names = row.names(maisons_CG), stringsAsFactors = FALSE))
+
+buffered_buildings_CG <- rbind(buffered_buildings_CG[buffered_buildings_CG$type %in% "grand ensemble",], maisons_CG)
+
+buildings_proches_CG <- map_chr(seq_along(electeursCG), ~ buffered_buildings_CG@data[which.min(gDistance(buffered_buildings_CG, electeursCG[.x, ], byid = TRUE)), "ID"])
+
+
+electeurs_buildings <- data_frame(ID = buildings_proches, n = electeursFV@data$n) %>%
+  count(ID, wt = n) %>%
+  arrange(-n)
+# ça a l'air OK
+
+electeurs_buildings_CG <- data_frame(ID = buildings_proches_CG, n = electeursCG@data$n) %>%
+  count(ID, wt = n) %>%
+  arrange(-n)
+
+
+buffered_buildings@data$electeurs <- electeurs_buildings[match(buffered_buildings@data$ID, electeurs_buildings$ID), ][["n"]]
+buffered_buildings@data[is.na(buffered_buildings@data$electeurs), "electeurs"] <- 0
+
+buffered_buildings_CG@data$electeurs <- electeurs_buildings_CG[match(buffered_buildings_CG@data$ID, electeurs_buildings_CG$ID), ][["n"]]
+buffered_buildings_CG@data[is.na(buffered_buildings_CG@data$electeurs), "electeurs"] <- 0
+
+
+# vérification
+#mapview::mapview(buffered_buildings[buffered_buildings$electeurs < 1, ])
+# il reste à régler le cas de la cité Val Plan dont un bâtiment est isolé
+# trop compliqué, tant pis (les deux bouts sont sur deux IRIS différents...)
+
+
+# on attribue un IRIS à chaque bâtiment
+
+buffered_buildings@data$IRIS <- over(buffered_buildings, IRIS1314[IRIS1314@data$DCOMIRIS %in% c(132130802:132130806, 132130903),])[,"DCOMIRIS"]
+
+buffered_buildings_CG@data$IRIS <- over(buffered_buildings_CG, IRIS1314)[,"DCOMIRIS"]
+
+# calcul du nombre d'électeurs par IRIS
+
+# calcul_electeurs <- function(i, coef_appart = 0.13, coef_immeubles = 0.31, var = "LFN") {
+#   # calculer le nombre d'électeurs FN en maisons et en immeubles dans l'IRIS
+#   coef <- ((logements1314 %>% filter(iris %in% i) %>% magrittr::extract2("Appartement")) * 
+#     coef_appart +
+#   (logements1314 %>% filter(iris %in% i) %>% magrittr::extract2("Maison")) *
+#     coef_immeubles) / 
+#   (votes_IRIS[votes_IRIS$DCOMIRIS %in% i, var] / votes_IRIS[votes_IRIS$DCOMIRIS %in% i, "inscrits"] * 100)
+# #  (votes_IRIS %>% filter(DCOMIRIS %in% i) %>% mutate_(votes =  var / inscrits * 100) %>% magrittr::extract2("votes"))
+#   
+#   votes_appart <- round(logements1314 %>% filter(iris %in% i) %>% magrittr::extract2("Appartement") * 
+#     coef_appart *
+#     coef / 100 *
+#     votes_IRIS %>% filter(DCOMIRIS %in% i) %>% magrittr::extract2("inscrits"),
+#     0)
+#   votes_maison <- round(logements1314 %>% filter(iris %in% i) %>% magrittr::extract2("Maison") * 
+#     coef_immeubles *
+#     coef / 100 *
+#     votes_IRIS %>% filter(DCOMIRIS %in% i) %>% magrittr::extract2("inscrits"),
+#     0)
+#   data_frame(appart = votes_appart, maison = votes_maison)
+# }
+
+
+# electeurs_FN_a_repartir <- bind_cols(data_frame(iris = IRIS1314@data[IRIS1314@data$TYP_IRIS != "D", "DCOMIRIS"]),
+#                                               map_df(IRIS1314@data[IRIS1314@data$TYP_IRIS != "D", "DCOMIRIS"], calcul_electeurs))
+# 
+# electeurs_PS_a_repartir <- bind_cols(data_frame(iris = IRIS1314@data[IRIS1314@data$TYP_IRIS != "D", "DCOMIRIS"]),
+#                                               map_df(IRIS1314@data[IRIS1314@data$TYP_IRIS != "D", "DCOMIRIS"], calcul_electeurs, var = "LUG"))
+
+# il faut ensuite les répartir par bâtiment. Pour cela on calcule un coef commun
+
+  coef <- sum(IRIS1314@data[IRIS1314@data$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)), "inscrits"]) / sum(buffered_buildings@data$electeurs)
+  coef_CG <- coef # comme on a découpé une bbox on ne peut pas calculer de coef, on réutilise donc celui de FV
+
+  # l'algo initial plus fin ne fonctionnait pas à cause des zones sur deux iris
+
+for (i in as.character(c(132130802:132130806, 132130903))) {
+  buffered_buildings@data[buffered_buildings@data$IRIS %in% i, "electeurs_redresses"] <- buffered_buildings@data[buffered_buildings@data$IRIS %in% i, "electeurs"] * coef
+
+  buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "grand ensemble", "FN"] <- round(buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "grand ensemble", "electeurs_redresses"] * 0.13)
+  buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "maison", "FN"] <- round(buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "maison", "electeurs_redresses"] * 0.31)
+  
+  buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "grand ensemble", "PS"] <- round(buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "grand ensemble", "electeurs_redresses"] * 0.1)
+  buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "maison", "PS"] <- round(buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "maison", "electeurs_redresses"] * 0.07)
+  
+  buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "grand ensemble", "abstention"] <- round(buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "grand ensemble", "electeurs_redresses"] * 0.66)
+  buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "maison", "abstention"] <- round(buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "maison", "electeurs_redresses"] * 0.38)
+  
+  buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "grand ensemble", "Droite"] <- round(buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "grand ensemble", "electeurs_redresses"] * 0.06)
+  buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "maison", "Droite"] <- round(buffered_buildings@data[buffered_buildings@data$IRIS %in% i & buffered_buildings@data$type %in% "maison", "electeurs_redresses"] * 0.12)
+  
+}
+
+for (i in as.character(c(132130102, 132130103, 132130701, 132130501))) {
+  buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i, "electeurs_redresses"] <- buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i, "electeurs"] * coef_CG
+
+  buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "grand ensemble", "FN"] <- round(buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "grand ensemble", "electeurs_redresses"] * 0.13)
+  buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "maison", "FN"] <- round(buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "maison", "electeurs_redresses"] * 0.31)
+  
+  buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "grand ensemble", "PS"] <- round(buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "grand ensemble", "electeurs_redresses"] * 0.1)
+  buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "maison", "PS"] <- round(buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "maison", "electeurs_redresses"] * 0.07)
+  
+  buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "grand ensemble", "abstention"] <- round(buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "grand ensemble", "electeurs_redresses"] * 0.66)
+  buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "maison", "abstention"] <- round(buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "maison", "electeurs_redresses"] * 0.38)
+  
+  buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "grand ensemble", "Droite"] <- round(buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "grand ensemble", "electeurs_redresses"] * 0.06)
+  buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "maison", "Droite"] <- round(buffered_buildings_CG@data[buffered_buildings_CG@data$IRIS %in% i & buffered_buildings_CG@data$type %in% "maison", "electeurs_redresses"] * 0.12)
+  
+}
+
+  
+buffered_buildings_dots <- sample_dots(buffered_buildings, c("abstention", "FN", "PS", "Droite"), convert2density = TRUE, N=250000, w=1, var.labels = c("Abstentionnistes", "Électeurs FN", "Électeurs PS", "Électeurs LR/UDI"), shp.id = "ID")
+
+buffered_buildings_dots_CG <- sample_dots(buffered_buildings_CG, c("abstention", "FN", "PS", "Droite"), convert2density = TRUE, N=250000, w=1, var.labels = c("Abstentionnistes", "Électeurs FN", "Électeurs PS", "Électeurs LR/UDI"), shp.id = "ID")
+
+
+dots_3coul <- buffered_buildings_dots[buffered_buildings_dots$class %in% c("Abstentionnistes", "Électeurs FN", "Électeurs PS"),]
+
+dots_3coul_CG <- buffered_buildings_dots_CG[buffered_buildings_dots_CG$class %in% c("Abstentionnistes", "Électeurs FN", "Électeurs PS"),]
+
+dots_3coul$class <- factor(dots_3coul$class)
+dots_3coul_CG$class <- factor(dots_3coul_CG$class)
+```
+
+Et voici la carte concernant le quartier la Rose/Frais Vallon :
+
+
+```{r plotOSM1, fig.width=10, fig.height=10.45333, message=FALSE, out.width=1500, dpi=150, include=FALSE}
+library(tibble)
+
+traits <- SpatialLines(
+  list(
+    Lines(
+      list(
+        Line(
+          cbind(
+            c(5.419426, 5.419034), c(43.325388, 43.329832) 
+          )
+        ),
+        Line(
+          cbind(
+            c(5.427227, 5.436), c(43.329065, 43.330601) 
+          )
+        ),
+        Line(
+          cbind(
+            c(5.427882, 5.43), c(43.325101, 43.324)
+          )
+        )
+      ),
+      ID = "traits"
+    )
+  )
+)
+
+traits@proj4string <- CRS("+init=epsg:4326")
+
+cercles <- frame_data(~label, ~long, ~lat,
+           "Frais Vallon", 43.325101, 5.427882,
+           "Saint Jérôme", 43.329832, 5.419034,
+           "La Rose", 43.329065, 5.427227)
+
+labels <- frame_data(~label, ~long, ~lat,
+                     "Frais Vallon", 43.323983, 5.431153,
+                     "Saint Jérôme", 43.3245, 5.419426,
+                     "La Rose", 43.330601, 5.437)
+
+coordinates(labels) <- c("lat", "long")
+coordinates(cercles) <- c("lat", "long")
+labels@proj4string <- CRS("+init=epsg:4326")
+cercles@proj4string <- CRS("+init=epsg:4326")
+
+metros <- frame_data(~station, ~long, ~lat,
+                     "Métro Frais Vallon", 43.32582, 5.42382,
+                     "Métro La Rose", 43.33369, 5.43009)
+coordinates(metros) <- c("lat", "long")
+metros@proj4string <- CRS("+init=epsg:4326")
+
+
+t1 <- tm_shape(frais_vallon_thin) +
+  tm_raster(alpha = 0.8) +
+tm_shape(dots_3coul) +
+  tm_dots(col = "class", alpha = 0.6, palette = c("#DEC065", "#1A1B59", "#DD0813"), size = 0.04, title = "") +
+tm_shape(IRIS1314[!IRIS1314@data$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)), ]) +
+  tm_polygons(col = "white", alpha = 0.8, border.alpha = 0) +
+tm_shape(IRIS1314[IRIS1314@data$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)), ]) +
+  tm_borders(lty = 2) +
+tm_shape(traits) +
+  tm_lines(col = "#201E26") +
+tm_shape(cercles) +
+  tm_bubbles(size = 4, col = "white", alpha = 0, border.col = "#201E26", border.lwd = 1) +
+tm_shape(labels) +
+  tm_text("label", size = 0.5, col = "#201E26", auto.placement = FALSE, shadow = TRUE, bg.color = "white", bg.alpha = 0.5) + 
+tm_shape(metros) +
+  tm_text("station", size  = 0.4, col = "#0000FF", auto.placement = FALSE, shadow = TRUE, bg.color = "white", bg.alpha = 0.5) +
+tm_credits("Réalisation : Joël Gombin pour Le Monde. \nDonnées : © les contributeurs d'OpenStreetMap.org / Listes électorales de la Ville de Marseille / Cartelec.net", size = 0.3, bg.color = "white", bg.alpha = 0.5) +
+  tm_layout(scale = 2) +
+  tm_legend(legend.bg.color = "white", legend.bg.alpha = 0.9)
+save_tmap(t1, filename = "FV_Rose_St_Jerome.png", width = 1500, dpi = 150)
+t1
+# couleurs commencent à être pas mal !
+```
+
+<!--La même, avec un fond légèrement différent (peut-être un peu plus informatif tout en restant léger)-->
+
+```{r plotOSM2, fig.width=10, fig.height=10.45333, message=FALSE, out.width=1500, dpi=150} 
+t2 <- tm_shape(frais_vallon_raster) +
+  tm_raster(alpha = 0.8) +
+tm_shape(dots_3coul) +
+  tm_dots(col = "class", alpha = 0.6, palette = c("#DEC065", "#1A1B59", "#DD0813"), size = 0.04, title = "") +
+tm_shape(IRIS1314[!IRIS1314@data$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)), ]) +
+  tm_polygons(col = "white", alpha = 0.8, border.alpha = 0) +
+tm_shape(IRIS1314[IRIS1314@data$DCOMIRIS %in% as.character(c(132130802:132130806, 132130903)), ]) +
+  tm_borders(lty = 2) +
+tm_shape(traits) +
+  tm_lines(col = "#201E26") +
+tm_shape(cercles) +
+  tm_bubbles(size = 4, col = "white", alpha = 0, border.col = "#201E26", border.lwd = 1) +
+tm_shape(labels) +
+  tm_text("label", size = 0.5, col = "#201E26", auto.placement = FALSE, shadow = TRUE, bg.color = "white", bg.alpha = 0.5) +
+tm_shape(metros) +
+  tm_text("station", size  = 0.4, col = "#0000FF", auto.placement = FALSE, shadow = TRUE, bg.color = "white", bg.alpha = 0.5) +
+tm_credits("Réalisation : Joël Gombin pour Le Monde. \nDonnées : © les contributeurs d'OpenStreetMap.org / Listes électorales de la Ville de Marseille / Cartelec.net", size = 0.3, bg.color = "white", bg.alpha = 0.5) +
+  tm_layout(scale = 2) +
+  tm_legend(legend.bg.color = "white", legend.bg.alpha = 0.9)
+save_tmap(t2, filename = "FV_Rose_St_Jerome_osm.png", width = 1500, dpi = 150)
+t2
+
+```
+
+Et voici la même carte en version interactive.
+
+```{r carteFVleaflet}
+
+pal <- colorFactor(c("#DEC065", "#1A1B59", "#DD0813"), domain = c("Abstentionnistes", "Électeurs FN", "Électeurs PS"))
+
+dots_3coul <- spTransform(dots_3coul, CRS("+init=epsg:4326"))
+IRIS1314 <- spTransform(IRIS1314, CRS("+init=epsg:4326"))
+
+leaflet(dots_3coul, width = 534) %>%
+  addProviderTiles("CartoDB.Positron",
+                   group = "Positron (par défaut)") %>% 
+  addProviderTiles("OpenStreetMap.BlackAndWhite",
+                   group = "OSM (noir et blanc)") %>% 
+  addProviderTiles("OpenTopoMap",
+                   group = "OpenTopoMap") %>% 
+  addTiles(group = "OSM") %>% 
+  addProviderTiles("Esri.WorldImagery",
+                   group = "Satellite") %>% 
+  addCircleMarkers(radius = 5,
+                   stroke = FALSE,
+                   color = ~pal(class),
+                   group = "Électeurs") %>% 
+  addPolygons(data = IRIS1314[IRIS1314@data$DCOMIRIS %in% c(132130802:132130806, 132130903), ],
+              stroke = TRUE,
+              opacity = 0.6,
+              fillOpacity = 0,
+              smoothFactor = 0.8,
+              weight = 1,
+              group = "IRIS") %>% 
+  addLegend("bottomleft", 
+            pal = pal, 
+            values = ~class, 
+            title = "Électeurs aux régionales de 2015, Frais Vallon / La Rose / Saint-Jérôme") %>% 
+  addLayersControl(baseGroups = c("Positron (par défaut)", "OSM (noir et blanc)", "OpenTopoMap", "OSM", "Satellite"),
+                   overlayGroups = c("Électeurs", "IRIS"),
+                   options = layersControlOptions(collapsed = TRUE)) %>% 
+  leafletplugins::addControlFullScreen()
+
+
+```
+
+
+Et voici pour Château Gombert :
+
+```{r plotCG_OSM, fig.width=10, fig.height=10.45333, message=FALSE, out.width=1500, dpi=150, include=FALSE} 
+t4 <- tm_shape(CG_thin) +
+  tm_raster(alpha = 0.8) +
+tm_shape(dots_3coul_CG) +
+  tm_dots(col = "class", alpha = 0.6, palette = c("#DEC065", "#1A1B59", "#DD0813"), size = 0.04, title = "") +
+tm_shape(IRIS1314[!IRIS1314@data$DCOMIRIS %in% as.character(c(132130102, 132130103, 132130701, 132130501)), ]) +
+  tm_polygons(col = "white", alpha = 0.8, border.alpha = 0) +
+tm_shape(IRIS1314[IRIS1314@data$DCOMIRIS %in% as.character(c(132130102, 132130103, 132130701, 132130501)), ]) +
+  tm_borders(lty = 2) +
+# tm_shape(traits) +
+#   tm_lines(col = "#201E26") +
+# tm_shape(cercles) +
+#   tm_bubbles(size = 4, col = "white", alpha = 0, border.col = "#201E26", border.lwd = 1) +
+# tm_shape(labels) +
+#   tm_text("label", size = 0.5, col = "#201E26", auto.placement = FALSE, shadow = TRUE, bg.color = "white", bg.alpha = 0.5) + # à faire à la main ?
+tm_credits("Réalisation : Joël Gombin pour Le Monde. \nDonnées : © les contributeurs d'OpenStreetMap.org / Listes électorales de la Ville de Marseille / Cartelec.net", size = 0.3, bg.color = "white", bg.alpha = 0.5) +
+  tm_layout(scale = 2) +
+  tm_legend(legend.bg.color = "white", legend.bg.alpha = 0.9)
+save_tmap(t4, filename = "ChateauGombert_thin.png", width = 1500, dpi = 150)
+t4
+
+```
+
+
+```{r plotCG_OSM2, fig.width=10, fig.height=10.45333, message=FALSE, out.width=1500, dpi=150} 
+
+CG_village <- frame_data(~label, ~long, ~lat, "Village", 43.35206,5.43920)
+coordinates(CG_village) <- c("lat", "long")
+CG_village@proj4string <- CRS("+init=epsg:4326")
+
+t3 <- tm_shape(CG_raster) +
+  tm_raster(alpha = 0.8) +
+tm_shape(dots_3coul_CG) +
+  tm_dots(col = "class", alpha = 0.6, palette = c("#DEC065", "#1A1B59", "#DD0813"), size = 0.04, title = "") +
+tm_shape(IRIS1314[!IRIS1314@data$DCOMIRIS %in% as.character(c(132130102, 132130103, 132130701, 132130501)), ]) +
+  tm_polygons(col = "white", alpha = 0.8, border.alpha = 0) +
+tm_shape(IRIS1314[IRIS1314@data$DCOMIRIS %in% as.character(c(132130102, 132130103, 132130701, 132130501)), ]) +
+  tm_borders(lty = 2) +
+tm_shape(CG_village) +
+  tm_bubbles(size = 5, col = "white", alpha = 0, border.col = "#201E26", border.lwd = 1) +
+tm_text("label", size = 0.5, col = "#201E26", auto.placement = FALSE, shadow = TRUE, bg.color = "white", bg.alpha = 0.5) +
+# tm_shape(traits) +
+#   tm_lines(col = "#201E26") +
+# tm_shape(cercles) +
+#   tm_bubbles(size = 4, col = "white", alpha = 0, border.col = "#201E26", border.lwd = 1) +
+# tm_shape(labels) +
+#   tm_text("label", size = 0.5, col = "#201E26", auto.placement = FALSE, shadow = TRUE, bg.color = "white", bg.alpha = 0.5) + # à faire à la main ?
+tm_credits("Réalisation : Joël Gombin pour Le Monde. \nDonnées : © les contributeurs d'OpenStreetMap.org / Listes électorales de la Ville de Marseille / Cartelec.net", size = 0.3, bg.color = "white", bg.alpha = 0.5) +
+  tm_layout(scale = 2) +
+  tm_legend(legend.bg.color = "white", legend.bg.alpha = 0.9)
+save_tmap(t3, filename = "ChateauGombert_osm.png", width = 1500, dpi = 150)
+t3
+
+```
+
+Et voici la même carte en version interactive.
+
+```{r carteCGleaflet}
+
+pal <- colorFactor(c("#DEC065", "#1A1B59", "#DD0813"), domain = c("Abstentionnistes", "Électeurs FN", "Électeurs PS"))
+
+dots_3coul_CG <- spTransform(dots_3coul_CG, CRS("+init=epsg:4326"))
+IRIS1314 <- spTransform(IRIS1314, CRS("+init=epsg:4326"))
+
+leaflet(dots_3coul_CG, width = 534) %>%
+  addProviderTiles("CartoDB.Positron",
+                   group = "Positron (par défaut)") %>% 
+  addProviderTiles("OpenStreetMap.BlackAndWhite",
+                   group = "OSM (noir et blanc)") %>% 
+  addProviderTiles("OpenTopoMap",
+                   group = "OpenTopoMap") %>% 
+  addTiles(group = "OSM") %>% 
+  addProviderTiles("Esri.WorldImagery",
+                   group = "Satellite") %>% 
+  addCircleMarkers(radius = 5,
+                   stroke = FALSE,
+                   color = ~pal(class),
+                   group = "Électeurs") %>% 
+  # addPolygons(data = IRIS1314[IRIS1314@data$DCOMIRIS %in% c(132130102, 132130103, 132130701, 132130501), ],
+  #             stroke = TRUE,
+  #             opacity = 0.6,
+  #             fillOpacity = 0,
+  #             smoothFactor = 0.8,
+  #             weight = 1,
+  #             group = "IRIS") %>% 
+  addLegend("bottomleft", 
+            pal = pal, 
+            values = ~class, 
+            title = "Électeurs aux régionales de 2015, Château-Gombert") %>% 
+  addLayersControl(baseGroups = c("Positron (par défaut)", "OSM (noir et blanc)", "OpenTopoMap", "OSM", "Satellite"),
+                   overlayGroups = c("Électeurs"),
+                   options = layersControlOptions(collapsed = TRUE)) %>% 
+  leafletplugins::addControlFullScreen()
+
+
+```
